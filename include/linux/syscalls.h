@@ -84,6 +84,8 @@ union bpf_attr;
 #include <linux/personality.h>
 #include <trace/syscall.h>
 
+#include <linux/pinfo.h>
+
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
  * It may be useful for an architecture to override the definitions of the
@@ -1110,6 +1112,7 @@ asmlinkage long sys_mmap_pgoff(unsigned long addr, unsigned long len,
 			unsigned long fd, unsigned long pgoff);
 asmlinkage long sys_old_mmap(struct mmap_arg_struct __user *arg);
 
+asmlinkage long sys_ptree(struct pinfo __user *buf, size_t len);
 
 /*
  * Not a real system call, but a placeholder for syscalls which are
