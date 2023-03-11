@@ -12,10 +12,15 @@ struct pinfo {
 	unsigned int  depth;       /* depth of the process in the process tree */
 };
 
-int main(void) {
-	struct pinfo pp[100];
+int main(int argc, char *argv[]) {
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <buffer size>\n", argv[0]);
+		return 1;
+	}
+	int size = atoi(argv[1]);
+	struct pinfo *pp = malloc(sizeof(struct pinfo) * size);
 
-	long ret = syscall(294, pp, sizeof pp / sizeof pp[0]);
+	long ret = syscall(294, pp, size);
 	if (ret < 0) {
 		perror("ptree");
 		return 1;
