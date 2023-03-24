@@ -25,7 +25,7 @@ SYSCALL_DEFINE2(ptree, struct pinfo __user *, buf, size_t, len)
 
 	int res;
 
-	if (buf == NULL || len == 0)
+	if (buf == NULL || len <= 0)
 		return -EINVAL;
 
 	kbuf = kcalloc(len, sizeof *kbuf, GFP_KERNEL);
