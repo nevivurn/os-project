@@ -17,3 +17,37 @@ See Documentation/00-INDEX for a list of what is contained in each file.
 Please read the Documentation/process/changes.rst file, as it contains the
 requirements for building and running the kernel, and information about
 the problems which may result by upgrading your kernel.
+
+
+## `ptree` implementation
+
+The implementation for the `ptree` syscall is in the `kernel/ptree.c` file.  The
+syscall, after checking the arguments for validity, allocates an internal buffer
+of the same size as the input buffer using `kvcalloc()`.
+
+Before starting traversing the process tree, it first obtains the lock on
+`tasklist_lock`, in order to safely read the `task_struct` lists.
+
+It then traverses the process tree, visiting each process in preorder. For the
+tree traversal, it keeps track of three pointers to `struct task_struct`s:
+`*leader`, `*parent`, and `*child`. `*leader` always points to the thread group
+leader of the process currently being traversed, `*parent` points to the thread
+that is being checked for children, and `*child` is the current process being
+processed.
+
+During traversal, it uses `goto`s placed at the beginning and end of the loops
+to simulate recursing into and out of process subtrees. It does this to avoid a
+true recursive solution that would require extra memory or potentially larger
+stack space.
+
+When going "down", it sets `*parent` to be the process being recursed into, and
+jumps to the point just before the main loop. When going back "up", it resets
+the tree traversal variables to the state just before recursing down, and jumps
+to the end of the loop. This structure is mainly inspired by the
+`walk_process_tree` function in the `fork.c` file.
+
+For each visited process, it calls `to_pinfo` which reads the relevant fields
+from the `task_struct` to populate `pinfo` fields.
+
+Finally, it releases the lock on `tasklist_lock` and copies the contents of the
+temporary buffer over to the user buffer before freeing it.
