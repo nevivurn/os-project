@@ -435,3 +435,7 @@ COND_SYSCALL(setuid16);
 
 /* restartable sequence */
 COND_SYSCALL(rseq);
+
+COND_SYSCALL(set_orientation);
+COND_SYSCALL(rotation_lock);
+COND_SYSCALL(rotation_unlock);
