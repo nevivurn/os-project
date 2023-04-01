@@ -107,7 +107,8 @@ int try_lock(int lo, int hi, int type) {
 
 	// Because try_lock is called after prepare_to_wait, we are guaranteed
 	// to observe any changes made in set_orientation, as long as we
-	// actually read it.
+	// actually read it.  However, the degree can change between this check
+	// and actually acquiring rot_spin, so we must check again afterwards.
 	degree = READ_ONCE(device_degree);
 	if (lo <= hi && (degree < lo || degree > hi))
 		return 0;
@@ -123,6 +124,13 @@ int try_lock(int lo, int hi, int type) {
 	ret = 1;
 	spin_lock(&rot_spin);
 
+	// Check again
+	degree = READ_ONCE(device_degree);
+	if (lo <= hi && (degree < lo || degree > hi))
+		goto exit;
+	if (hi < lo && (degree < lo && degree > hi))
+		goto exit;
+
 	FOR_WRAP_RANGE(i, lo, hi, ret &= !w_runners[i]);
 	if (ret && type == ROT_WRITE)
 		FOR_WRAP_RANGE(i, lo, hi, ret &= !r_runners[i]);
@@ -134,6 +142,7 @@ int try_lock(int lo, int hi, int type) {
 			FOR_WRAP_RANGE(i, lo, hi, w_runners[i]++);
 	}
 
+exit:
 	spin_unlock(&rot_spin);
 	return ret;
 }
