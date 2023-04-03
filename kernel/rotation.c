@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/rotation.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/syscalls.h>
 #include <linux/wait.h>
 #include <linux/list.h>
@@ -256,4 +257,35 @@ found:
 error:
 	spin_unlock(&rot_spin);
 	return ret;
+}
+
+void exit_rotlock(struct task_struct *tsk) {
+	struct rotlock_struct *cur, *tmp;
+
+	pid_t current_pid;
+	int i;
+
+	current_pid = task_tgid_nr(tsk);
+
+	spin_lock(&rot_spin);
+
+	list_for_each_entry_safe(cur, tmp, &rot_list, list) {
+		if (cur->pid != current_pid)
+			continue;
+
+		printk(KERN_INFO "cleanup %ld for %d\n", cur->id, current_pid);
+
+		if (cur->type == ROT_READ)
+			FOR_WRAP_RANGE(i, cur->lo, cur->hi, r_runners[i]--);
+		if (cur->type == ROT_WRITE)
+			FOR_WRAP_RANGE(i, cur->lo, cur->hi, w_runners[i]--);
+
+		list_del(&cur->list);
+		kfree(cur);
+	}
+
+	spin_unlock(&rot_spin);
+	wake_up_interruptible(&rot_wq);
+
+	return;
 }
