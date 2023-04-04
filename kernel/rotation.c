@@ -127,10 +127,14 @@ int try_lock(int lo, int hi, int type) {
 
 	// Check again
 	degree = READ_ONCE(device_degree);
-	if (lo <= hi && (degree < lo || degree > hi))
+	if (lo <= hi && (degree < lo || degree > hi)) {
+		ret = 0;
 		goto exit;
-	if (hi < lo && (degree < lo && degree > hi))
+	}
+	if (hi < lo && (degree < lo && degree > hi)) {
+		ret = 0;
 		goto exit;
+	}
 
 	FOR_WRAP_RANGE(i, lo, hi, ret &= !w_runners[i]);
 	if (ret && type == ROT_WRITE)
