@@ -19,7 +19,7 @@ struct rotlock_struct {
 	long id;
 	int lo, hi, type;
 
-	pid_t pid;
+	pid_t tgid;
 };
 
 static DEFINE_SPINLOCK(rot_spin);
@@ -64,18 +64,18 @@ retry:
 long add_rot_list_entry(int lo, int hi, int type) {
 	struct rotlock_struct *entry;
 	long lid;
-	pid_t current_pid;
+	pid_t current_tgid;
 
 	entry = kmalloc(sizeof *entry, GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
-	current_pid = task_tgid_nr(current);
+	current_tgid = task_tgid_nr(current);
 
 	entry->lo = lo;
 	entry->hi = hi;
 	entry->type = type;
-	entry->pid = current_pid;
+	entry->tgid = current_tgid;
 	INIT_LIST_HEAD(&entry->list);
 
 	spin_lock(&rot_spin);
@@ -220,10 +220,10 @@ SYSCALL_DEFINE1(rotation_unlock, long, lid) {
 	long ret = 0;
 
 	struct rotlock_struct *cur, *tmp;
-	pid_t current_pid;
+	pid_t current_tgid;
 	int i;
 
-	current_pid = task_tgid_nr(current);
+	current_tgid = task_tgid_nr(current);
 
 	spin_lock(&rot_spin);
 
@@ -237,7 +237,7 @@ SYSCALL_DEFINE1(rotation_unlock, long, lid) {
 
 found:
 	// Lock not owned by process(group)
-	if (cur->pid != current_pid) {
+	if (cur->tgid != current_tgid) {
 		ret = -EPERM;
 		goto error;
 	}
@@ -262,17 +262,21 @@ error:
 void exit_rotlock(struct task_struct *tsk) {
 	struct rotlock_struct *cur, *tmp;
 
-	pid_t current_pid;
+	pid_t current_tgid;
 	int i;
+	int woke = 0;
 
-	current_pid = task_tgid_nr(tsk);
-	// TODO: check if we are group_leader
+	current_tgid = task_tgid_nr(tsk);
+
+	if (!thread_group_leader(tsk))
+		return;
 
 	spin_lock(&rot_spin);
 
 	list_for_each_entry_safe(cur, tmp, &rot_list, list) {
-		if (cur->pid != current_pid)
+		if (cur->tgid != current_tgid)
 			continue;
+		woke = 1;
 
 		if (cur->type == ROT_READ)
 			FOR_WRAP_RANGE(i, cur->lo, cur->hi, r_runners[i]--);
@@ -284,7 +288,9 @@ void exit_rotlock(struct task_struct *tsk) {
 	}
 
 	spin_unlock(&rot_spin);
-	wake_up_interruptible(&rot_wq);
+
+	if (woke)
+		wake_up_interruptible(&rot_wq);
 
 	return;
 }
