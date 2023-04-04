@@ -266,14 +266,13 @@ void exit_rotlock(struct task_struct *tsk) {
 	int i;
 
 	current_pid = task_tgid_nr(tsk);
+	// TODO: check if we are group_leader
 
 	spin_lock(&rot_spin);
 
 	list_for_each_entry_safe(cur, tmp, &rot_list, list) {
 		if (cur->pid != current_pid)
 			continue;
-
-		printk(KERN_INFO "cleanup %ld for %d\n", cur->id, current_pid);
 
 		if (cur->type == ROT_READ)
 			FOR_WRAP_RANGE(i, cur->lo, cur->hi, r_runners[i]--);
