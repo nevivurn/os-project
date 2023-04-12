@@ -1,13 +1,16 @@
 CC := aarch64-linux-gnu-gcc
-CFLAGS := --std=c11 -Wall -Wextra -Wpedantic -Og -g -static
+CFLAGS := -Wall -Wextra -Wpedantic -Og -g -static
 
 TMP := tmp
 
 SOURCES := $(wildcard *.c)
-BINS := $(SOURCES:.c=)
+BINS := $(SOURCES:.c=.o)
 
 .PHONY: all
 all: $(BINS)
+
+$(BINS): %.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 .PHONY: push
 push: $(TMP)
