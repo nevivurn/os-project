@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <string.h>
 
 #include "syscalls.h"
 
@@ -20,10 +21,10 @@ int main(int argc, char *argv[]) {
     }
 
     struct sigaction action;
-	memset(&action, 0, sizeof(struct sigaction));
-	action.sa_handler = term;
-	if (sigaction(SIGTERM, &action, NULL) == -1)
-		exit(-1);
+    memset(&action, 0, sizeof(struct sigaction));
+    action.sa_handler = term;
+    if (sigaction(SIGTERM, &action, NULL) == -1)
+        exit(-1);
 
     int lo = atoi(argv[1]);
     int hi = atoi(argv[2]);
@@ -43,6 +44,7 @@ int main(int argc, char *argv[]) {
             // read content in quiz
             char buf[100];
             fgets(buf, 100, quiz);
+            fclose(quiz);
             int num = atoi(buf);
             printf("%d = ", num);
             int factor = 2, is_first = 1;

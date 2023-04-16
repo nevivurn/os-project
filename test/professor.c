@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <string.h>
 
 #include "syscalls.h"
 
@@ -18,11 +19,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-	struct sigaction action;
-	memset(&action, 0, sizeof(struct sigaction));
-	action.sa_handler = term;
-	if (sigaction(SIGTERM, &action, NULL) == -1)
-		exit(-1);
+    struct sigaction action;
+    memset(&action, 0, sizeof(struct sigaction));
+    action.sa_handler = term;
+    if (sigaction(SIGTERM, &action, NULL) == -1)
+        exit(-1);
 
 
     int num = atoi(argv[1]);

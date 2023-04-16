@@ -4,13 +4,10 @@ CFLAGS := -Wall -Wextra -Wpedantic -Og -g -static
 TMP := tmp
 
 SOURCES := $(wildcard *.c)
-BINS := $(SOURCES:.c=.o)
+BINS := $(SOURCES:.c=)
 
 .PHONY: all
 all: $(BINS)
-
-$(BINS): %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
 
 .PHONY: push
 push: $(TMP)
