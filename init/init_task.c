@@ -5,6 +5,7 @@
 #include <linux/sched.h>
 #include <linux/sched/sysctl.h>
 #include <linux/sched/rt.h>
+#include <linux/sched/wrr.h>
 #include <linux/sched/task.h>
 #include <linux/init.h>
 #include <linux/fs.h>
@@ -80,6 +81,10 @@ struct task_struct init_task
 	},
 	.se		= {
 		.group_node 	= LIST_HEAD_INIT(init_task.se.group_node),
+	},
+	.wrr		= {
+		.list		= LIST_HEAD_INIT(init_task.wrr.list),
+		.time_slice	= WRR_TIMESLICE * WRR_DEFAULT_WEIGHT,
 	},
 	.rt		= {
 		.run_list	= LIST_HEAD_INIT(init_task.rt.run_list),
