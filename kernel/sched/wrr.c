@@ -7,31 +7,37 @@ wrr_task_of(struct sched_wrr_entity *wrr_se) {
 	return container_of(wrr_se, struct task_struct, wrr);
 }
 
-void __init init_wrr_rq(struct wrr_rq *wrr_rq) {
+void __init init_wrr_rq(struct wrr_rq *wrr_rq, bool balancer) {
 	INIT_LIST_HEAD(&wrr_rq->head);
+	wrr_rq->total_weight = (atomic_t) ATOMIC_INIT(0);
+	//if (balancer)
+		wrr_rq->next_balance = WRR_BALANCE;
 }
 
 static void update_curr_wrr(struct rq *rq);
 
-// TODO(wrr): figure out whether rcu even makes sense here
-// probably need to implement balance / weight-tracking code first
-
 static void enqueue_task_wrr(struct rq *rq, struct task_struct *p, int flags) {
-	// TODO(wrr): deal with flags. we pboably want to support ENQUEUE_HEAD
+	// TODO(wrr): deal with flags. we probably want to support ENQUEUE_HEAD
 
 	struct sched_wrr_entity *wrr_se = &p->wrr;
 	struct wrr_rq *wrr_rq = &rq->wrr;
 
 	INIT_LIST_HEAD(&wrr_se->list);
-	list_add_tail_rcu(&wrr_se->list, &wrr_rq->head);
+	list_add_tail(&wrr_se->list, &wrr_rq->head);
+
+	add_nr_running(rq, 1);
+	atomic_add(p->wrr.weight, &wrr_rq->total_weight);
 }
 
 static void dequeue_task_wrr(struct rq *rq, struct task_struct *p, int flags) {
 	struct sched_wrr_entity *wrr_se = &p->wrr;
+	struct wrr_rq *wrr_rq = &rq->wrr;
 
 	update_curr_wrr(rq);
-	list_del_rcu(&wrr_se->list);
-	// TODO(wrr): boot hangs if we do synchronize_rcu here for some reason
+	list_del(&wrr_se->list);
+
+	sub_nr_running(rq, 1);
+	atomic_sub(p->wrr.weight,&wrr_rq->total_weight);
 }
 
 static void yield_task_wrr(struct rq *rq) {
@@ -51,9 +57,7 @@ pick_next_task_wrr(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	struct wrr_rq *wrr_rq = &rq->wrr;
 	struct task_struct *p;
 
-	rcu_read_lock();
-	wrr_se = list_first_or_null_rcu(&wrr_rq->head, struct sched_wrr_entity, list);
-	rcu_read_unlock();
+	wrr_se = list_first_entry_or_null(&wrr_rq->head, struct sched_wrr_entity, list);
 
 	if (!wrr_se)
 		return NULL;
@@ -70,31 +74,59 @@ static void put_prev_task_wrr(struct rq *rq, struct task_struct *prev) {
 }
 
 static int select_task_rq_wrr(struct task_struct *p, int task_cpu, int sd_flag, int flags) {
-	// TODO(wrr): we can try doing balancing here, eg. SD_BALANCE_FORK
-	// NOTE: we do not hold locks here, need RCU for reading CPUs and rq's
-	return task_cpu;
+	int cpu;
+	int min_cpu = task_cpu;
+	unsigned int min_weight = atomic_read(&cpu_rq(task_cpu)->wrr.total_weight);
+	unsigned int cur_weight;
+
+	// TODO(wrr): do we actually need rcu_read_lock here?
+	rcu_read_lock();
+	for_each_possible_cpu(cpu) {
+		if (!cpumask_test_cpu(cpu, &p->cpus_allowed))
+			continue;
+
+		cur_weight = atomic_read(&cpu_rq(cpu)->wrr.total_weight);
+		if (cur_weight < min_weight) {
+			min_cpu = cpu;
+			min_weight = cur_weight;
+		}
+	}
+	rcu_read_unlock();
+
+	return min_cpu;
 }
 
 static void set_curr_task_wrr(struct rq *rq) {
 	rq->curr->se.exec_start = rq_clock_task(rq);
 }
 
+static struct callback_head wrr_balance_callback;
+
+static void wrr_balance(struct rq *this_rq) {
+	printk(KERN_INFO "would balance %d\n", this_rq->cpu);
+}
+
 static void task_tick_wrr(struct rq *rq, struct task_struct *p, int queued) {
+	struct wrr_rq *wrr_rq = &rq->wrr;
+
 	update_curr_wrr(rq);
+
+	if (wrr_rq->next_balance && !--wrr_rq->next_balance) {
+		wrr_rq->next_balance = WRR_BALANCE;
+		queue_balance_callback(rq, &wrr_balance_callback, wrr_balance);
+	}
+
 
 	if (--p->wrr.time_slice)
 		return;
-	p->wrr.time_slice = WRR_TIMESLICE * WRR_DEFAULT_WEIGHT;
+	p->wrr.time_slice = WRR_TIMESLICE * p->wrr.weight;
 
 	yield_task_wrr(rq);
 	resched_curr(rq);
 }
 
 static void switched_to_wrr(struct rq *rq, struct task_struct *p) {
-	// TODO(wrr): reset weights? see also switched_from
-	// it may not even be necessary, investigate what happens to nice when
-	// switching from/to rt
-	return;
+	p->wrr.weight = WRR_DEFAULT_WEIGHT;
 }
 
 static void prio_changed_wrr(struct rq *rq, struct task_struct *p, int oldprio) {
@@ -103,14 +135,33 @@ static void prio_changed_wrr(struct rq *rq, struct task_struct *p, int oldprio) 
 };
 
 static void update_curr_wrr(struct rq *rq) {
-	// TODO(wrr): investigate which stats we need to keep up-to-date
+	struct task_struct *curr = rq->curr;
+
+	u64 now, delta_exec;
+
+	if (curr->sched_class != &wrr_sched_class)
+		return;
+
+	now = rq_clock_task(rq);
+	delta_exec = now - curr->se.exec_start;
+	if (unlikely((s64)delta_exec <= 0))
+		return;
+
+	schedstat_set(curr->se.statistics.exec_max,
+		      max(curr->se.statistics.exec_max, delta_exec));
+
+	curr->se.sum_exec_runtime += delta_exec;
+	account_group_exec_runtime(curr, delta_exec);
+
+	curr->se.exec_start = now;
+	cgroup_account_cputime(curr, delta_exec);
+
 	return;
 }
 
 static unsigned int
 get_rr_interval_wrr(struct rq *rq, struct task_struct *p) {
-	// TODO(wrr): weight
-	return WRR_TIMESLICE * WRR_DEFAULT_WEIGHT;
+	return WRR_TIMESLICE * p->wrr.weight;
 }
 
 const struct sched_class wrr_sched_class = {
@@ -154,3 +205,10 @@ const struct sched_class wrr_sched_class = {
 	/* .task_change_group */			// optional
 #endif
 };
+
+#ifdef CONFIG_SCHED_DEBUG
+void print_wrr_stats(struct seq_file *m, int cpu)
+{
+	print_wrr_rq(m, cpu, &cpu_rq(cpu)->wrr);
+}
+#endif /* CONFIG_SCHED_DEBUG */

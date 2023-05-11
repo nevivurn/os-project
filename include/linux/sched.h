@@ -483,6 +483,7 @@ struct sched_entity {
 struct sched_wrr_entity {
 	struct list_head		list;
 
+	unsigned int			weight;
 	unsigned int			time_slice;
 };
 

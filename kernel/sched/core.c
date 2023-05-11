@@ -2163,7 +2163,7 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	__dl_clear_params(p);
 
 	INIT_LIST_HEAD(&p->wrr.list);
-	p->wrr.time_slice	= WRR_TIMESLICE * WRR_DEFAULT_WEIGHT; // TODO(wrr): weight
+	p->wrr.time_slice	= WRR_TIMESLICE * p->wrr.weight;
 
 	INIT_LIST_HEAD(&p->rt.run_list);
 	p->rt.timeout		= 0;
@@ -5991,7 +5991,7 @@ void __init sched_init(void)
 		rq->calc_load_active = 0;
 		rq->calc_load_update = jiffies + LOAD_FREQ;
 		init_cfs_rq(&rq->cfs);
-		init_wrr_rq(&rq->wrr);
+		init_wrr_rq(&rq->wrr, i == 0);
 		init_rt_rq(&rq->rt);
 		init_dl_rq(&rq->dl);
 #ifdef CONFIG_FAIR_GROUP_SCHED

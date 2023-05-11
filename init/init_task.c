@@ -84,6 +84,7 @@ struct task_struct init_task
 	},
 	.wrr		= {
 		.list		= LIST_HEAD_INIT(init_task.wrr.list),
+		.weight		= WRR_DEFAULT_WEIGHT,
 		.time_slice	= WRR_TIMESLICE * WRR_DEFAULT_WEIGHT,
 	},
 	.rt		= {

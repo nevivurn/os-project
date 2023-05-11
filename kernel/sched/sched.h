@@ -585,6 +585,9 @@ static inline int rt_bandwidth_enabled(void)
 struct wrr_rq {
 	struct list_head	head;
 	// TODO(wrr): rq-level stats (sum weights), debug stats
+
+	atomic_t		total_weight;
+	unsigned int		next_balance;
 };
 
 /* Real-Time classes' related field in a runqueue: */
@@ -2055,9 +2058,11 @@ extern struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq);
 extern bool sched_debug_enabled;
 
 extern void print_cfs_stats(struct seq_file *m, int cpu);
+extern void print_wrr_stats(struct seq_file *m, int cpu);
 extern void print_rt_stats(struct seq_file *m, int cpu);
 extern void print_dl_stats(struct seq_file *m, int cpu);
 extern void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq);
+extern void print_wrr_rq(struct seq_file *m, int cpu, struct wrr_rq *wrr_rq);
 extern void print_rt_rq(struct seq_file *m, int cpu, struct rt_rq *rt_rq);
 extern void print_dl_rq(struct seq_file *m, int cpu, struct dl_rq *dl_rq);
 #ifdef CONFIG_NUMA_BALANCING
@@ -2070,7 +2075,7 @@ print_numa_stats(struct seq_file *m, int node, unsigned long tsf,
 #endif /* CONFIG_SCHED_DEBUG */
 
 extern void init_cfs_rq(struct cfs_rq *cfs_rq);
-extern void init_wrr_rq(struct wrr_rq *wrr_rq);
+extern void init_wrr_rq(struct wrr_rq *wrr_rq, bool balancer);
 extern void init_rt_rq(struct rt_rq *rt_rq);
 extern void init_dl_rq(struct dl_rq *dl_rq);
 
