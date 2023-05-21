@@ -7,11 +7,13 @@ wrr_task_of(struct sched_wrr_entity *wrr_se) {
 	return container_of(wrr_se, struct task_struct, wrr);
 }
 
-void __init init_wrr_rq(struct wrr_rq *wrr_rq, bool balancer) {
+static DEFINE_RAW_SPINLOCK(wrr_balance_lock);
+static unsigned long wrr_global_next_balance;
+
+void __init init_wrr_rq(struct wrr_rq *wrr_rq) {
 	INIT_LIST_HEAD(&wrr_rq->head);
 	wrr_rq->total_weight = (atomic_t) ATOMIC_INIT(0);
-	//if (balancer)
-		wrr_rq->next_balance = WRR_BALANCE;
+	wrr_rq->wrr_next_balance = jiffies;
 }
 
 static void update_curr_wrr(struct rq *rq);
@@ -47,9 +49,7 @@ static void yield_task_wrr(struct rq *rq) {
 }
 
 // never preempt
-static void check_preempt_curr_wrr(struct rq *rq, struct task_struct *p, int flags) {
-	return;
-}
+static void check_preempt_curr_wrr(struct rq *rq, struct task_struct *p, int flags) {}
 
 static struct task_struct *
 pick_next_task_wrr(struct rq *rq, struct task_struct *prev, struct rq_flags *rf) {
@@ -100,22 +100,107 @@ static void set_curr_task_wrr(struct rq *rq) {
 	rq->curr->se.exec_start = rq_clock_task(rq);
 }
 
-static struct callback_head wrr_balance_callback;
+static void update_wrr_load_balance(unsigned long next_balance) {
+	int cpu;
+	for_each_possible_cpu(cpu) {
+		struct rq *rq = cpu_rq(cpu);
+		rq->wrr.wrr_next_balance = next_balance;
+	}
+}
 
-static void wrr_balance(struct rq *this_rq) {
-	printk(KERN_INFO "would balance %d\n", this_rq->cpu);
+static void _wrr_load_balance(void) {
+	struct rq *min_rq, *max_rq;
+	struct sched_wrr_entity *wrr_se, *max_wrr_se = NULL;
+	struct task_struct *p;
+
+	int cpu;
+	int min_cpu = -1, max_cpu = -1;
+	unsigned int min_weight = 0, max_weight = 0;
+	unsigned int p_weight;
+
+	rcu_read_lock();
+	for_each_possible_cpu(cpu) {
+		struct rq *rq = cpu_rq(cpu);
+		struct wrr_rq *wrr = &rq->wrr;
+		unsigned int weight = atomic_read(&wrr->total_weight);
+
+		if (min_weight > weight || min_cpu == -1)
+			min_cpu = cpu, min_weight = weight;
+		if (max_weight < weight || max_cpu == -1)
+			max_cpu = cpu, max_weight = weight;
+	}
+	rcu_read_unlock();
+	if (min_cpu == max_cpu)
+		return;
+
+	min_rq = cpu_rq(min_cpu);
+	max_rq = cpu_rq(max_cpu);
+
+	double_rq_lock(min_rq, max_rq);
+
+	list_for_each_entry(wrr_se, &max_rq->wrr.head, list) {
+		struct task_struct *p = wrr_task_of(wrr_se);
+		unsigned int weight = wrr_se->weight;
+
+		if (task_running(max_rq, p))
+			continue;
+		if (!cpumask_test_cpu(min_cpu, &p->cpus_allowed))
+			continue;
+		if (max_weight < weight || min_weight+weight >= max_weight-weight)
+			continue;
+
+		if (!max_wrr_se || max_wrr_se->weight < weight)
+			max_wrr_se = wrr_se;
+	}
+	if (!max_wrr_se) {
+		double_rq_unlock(min_rq, max_rq);
+		return;
+	}
+
+	p = wrr_task_of(max_wrr_se);
+	p_weight = max_wrr_se->weight;
+
+	deactivate_task(max_rq, p, DEQUEUE_NOCLOCK);
+	set_task_cpu(p, min_cpu);
+	activate_task(min_rq, p, ENQUEUE_NOCLOCK);
+
+	double_rq_unlock(min_rq, max_rq);
+
+	printk(KERN_DEBUG "[WRR LOAD BALANCING] jiffies: %Ld\n"
+		"[WRR LOAD BALANCING] max_cpu: %d, total weight: %u\n"
+		"[WRR LOAD BALANCING] min_cpu: %d, total weight: %u\n"
+		"[WRR LOAD BALANCING] migrated task name: %s, task weight: %u\n",
+		(long long) jiffies,
+		max_cpu, max_weight,
+		min_cpu, min_weight,
+		p->comm, p_weight);
+	return;
+}
+
+// rq->lock is *not* held
+void wrr_load_balance(struct rq *rq) {
+	struct wrr_rq *wrr_rq = &rq->wrr;
+
+	// We check wrr_rq->wrr_next_balance because it is OK if we race a bit
+	if (!time_after_eq(jiffies, wrr_rq->wrr_next_balance))
+		return;
+
+	raw_spin_lock(&wrr_balance_lock);
+
+	if (!time_after_eq(jiffies, wrr_global_next_balance)) {
+		raw_spin_unlock(&wrr_balance_lock);
+		return;
+	}
+
+	wrr_global_next_balance = jiffies + WRR_BALANCE;
+	update_wrr_load_balance(wrr_global_next_balance);
+	_wrr_load_balance();
+
+	raw_spin_unlock(&wrr_balance_lock);
 }
 
 static void task_tick_wrr(struct rq *rq, struct task_struct *p, int queued) {
-	struct wrr_rq *wrr_rq = &rq->wrr;
-
 	update_curr_wrr(rq);
-
-	if (wrr_rq->next_balance && !--wrr_rq->next_balance) {
-		wrr_rq->next_balance = WRR_BALANCE;
-		queue_balance_callback(rq, &wrr_balance_callback, wrr_balance);
-	}
-
 
 	if (--p->wrr.time_slice)
 		return;
@@ -129,10 +214,7 @@ static void switched_to_wrr(struct rq *rq, struct task_struct *p) {
 	p->wrr.weight = WRR_DEFAULT_WEIGHT;
 }
 
-static void prio_changed_wrr(struct rq *rq, struct task_struct *p, int oldprio) {
-	// TODO(wrr): we can probably use the existing prio code to implement weights
-	return;
-};
+static void prio_changed_wrr(struct rq *rq, struct task_struct *p, int oldprio) {}
 
 static void update_curr_wrr(struct rq *rq) {
 	struct task_struct *curr = rq->curr;
@@ -155,8 +237,6 @@ static void update_curr_wrr(struct rq *rq) {
 
 	curr->se.exec_start = now;
 	cgroup_account_cputime(curr, delta_exec);
-
-	return;
 }
 
 static unsigned int
