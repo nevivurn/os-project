@@ -12,6 +12,7 @@
             ccache
             qemu
             gdb
+            pkgsCross.aarch64-multiplatform.musl
             pkgsCross.aarch64-multiplatform.stdenv.cc
           ] ++ pkgs.linux_4_19.nativeBuildInputs;
         };

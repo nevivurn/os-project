@@ -286,6 +286,78 @@ const struct sched_class wrr_sched_class = {
 #endif
 };
 
+static long sched_setweight(struct task_struct *p, unsigned int weight) {
+	struct rq *rq;
+	struct rq_flags rf;
+	const struct cred *cred = current_cred(), *pcred = __task_cred(p);
+	int retval;
+
+	if (!capable(CAP_SYS_NICE)
+		&& !uid_eq(cred->euid, pcred->euid)
+		&& !uid_eq(cred->euid, pcred->uid))
+		return -EPERM;
+
+	rq = task_rq_lock(p, &rf);
+	retval = -EINVAL;
+	if (fair_policy(p->policy)) {
+		p->wrr.weight = weight;
+		retval = 0;
+	}
+	task_rq_unlock(rq, p, &rf);
+
+	return retval;
+}
+
+static long sched_getweight(struct task_struct *p) {
+	struct rq *rq;
+	struct rq_flags rf;
+	int retval;
+
+	rq = task_rq_lock(p, &rf);
+	retval = -EINVAL;
+	if (p->sched_class == &wrr_sched_class)
+		retval = p->wrr.weight;
+	task_rq_unlock(rq, p, &rf);
+
+	return retval;
+}
+
+SYSCALL_DEFINE2(sched_setweight, pid_t, pid, unsigned int, weight) {
+	struct task_struct *p;
+	int retval;
+
+	if (pid < 0)
+		return -EINVAL;
+	if (weight < 1 || weight > 20)
+		return -EINVAL;
+
+	rcu_read_lock();
+	retval = -ESRCH;
+	p = pid ? find_task_by_vpid(pid) : current;
+	if (p)
+		retval = sched_setweight(p, weight);
+	rcu_read_unlock();
+
+	return retval;
+}
+
+SYSCALL_DEFINE1(sched_getweight, pid_t, pid) {
+	struct task_struct *p;
+	int retval;
+
+	if (pid < 0)
+		return -EINVAL;
+
+	rcu_read_lock();
+	retval = -ESRCH;
+	p = pid ? find_task_by_vpid(pid) : current;
+	if (p)
+		retval = sched_getweight(p);
+	rcu_read_unlock();
+
+	return retval;
+}
+
 #ifdef CONFIG_SCHED_DEBUG
 void print_wrr_stats(struct seq_file *m, int cpu)
 {

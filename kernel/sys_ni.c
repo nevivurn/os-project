@@ -435,3 +435,6 @@ COND_SYSCALL(setuid16);
 
 /* restartable sequence */
 COND_SYSCALL(rseq);
+
+COND_SYSCALL(sched_setweight);
+COND_SYSCALL(sched_getweight);
