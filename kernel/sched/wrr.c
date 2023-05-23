@@ -160,9 +160,9 @@ static void _wrr_load_balance(void) {
 	p = wrr_task_of(max_wrr_se);
 	p_weight = max_wrr_se->weight;
 
-	deactivate_task(max_rq, p, DEQUEUE_NOCLOCK);
+	deactivate_task(max_rq, p, 0);
 	set_task_cpu(p, min_cpu);
-	activate_task(min_rq, p, ENQUEUE_NOCLOCK);
+	activate_task(min_rq, p, 0);
 
 	double_rq_unlock(min_rq, max_rq);
 
