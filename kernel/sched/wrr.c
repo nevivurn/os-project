@@ -300,7 +300,11 @@ static long sched_setweight(struct task_struct *p, unsigned int weight) {
 	rq = task_rq_lock(p, &rf);
 	retval = -EINVAL;
 	if (fair_policy(p->policy)) {
+		if (task_on_rq_queued(p))
+			atomic_sub(p->wrr.weight, &rq->wrr.total_weight);
 		p->wrr.weight = weight;
+		if (task_on_rq_queued(p))
+			atomic_add(p->wrr.weight, &rq->wrr.total_weight);
 		retval = 0;
 	}
 	task_rq_unlock(rq, p, &rf);
