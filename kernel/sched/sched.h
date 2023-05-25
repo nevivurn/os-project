@@ -21,6 +21,7 @@
 #include <linux/sched/nohz.h>
 #include <linux/sched/numa_balancing.h>
 #include <linux/sched/prio.h>
+#include <linux/sched/wrr.h>
 #include <linux/sched/rt.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/smt.h>
@@ -159,7 +160,8 @@ static inline int idle_policy(int policy)
 }
 static inline int fair_policy(int policy)
 {
-	return policy == SCHED_NORMAL || policy == SCHED_BATCH;
+	return policy == SCHED_NORMAL || policy == SCHED_BATCH ||
+		policy == SCHED_WRR;
 }
 
 static inline int rt_policy(int policy)
@@ -323,6 +325,7 @@ extern bool dl_cpu_busy(unsigned int cpu);
 #include <linux/cgroup.h>
 
 struct cfs_rq;
+struct wrr_rq;
 struct rt_rq;
 
 extern struct list_head task_groups;
@@ -579,6 +582,14 @@ static inline int rt_bandwidth_enabled(void)
 # define HAVE_RT_PUSH_IPI
 #endif
 
+struct wrr_rq {
+	struct list_head	head;
+	// TODO(wrr): rq-level stats (sum weights), debug stats
+
+	atomic_t		total_weight;
+	unsigned long		wrr_next_balance;
+};
+
 /* Real-Time classes' related field in a runqueue: */
 struct rt_rq {
 	struct rt_prio_array	active;
@@ -806,6 +817,7 @@ struct rq {
 	u64			nr_switches;
 
 	struct cfs_rq		cfs;
+	struct wrr_rq		wrr;
 	struct rt_rq		rt;
 	struct dl_rq		dl;
 
@@ -1583,6 +1595,7 @@ static inline void set_curr_task(struct rq *rq, struct task_struct *curr)
 extern const struct sched_class stop_sched_class;
 extern const struct sched_class dl_sched_class;
 extern const struct sched_class rt_sched_class;
+extern const struct sched_class wrr_sched_class;
 extern const struct sched_class fair_sched_class;
 extern const struct sched_class idle_sched_class;
 
@@ -1592,6 +1605,7 @@ extern const struct sched_class idle_sched_class;
 extern void update_group_capacity(struct sched_domain *sd, int cpu);
 
 extern void trigger_load_balance(struct rq *rq);
+extern void wrr_load_balance(struct rq *rq);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
 
@@ -2045,9 +2059,11 @@ extern struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq);
 extern bool sched_debug_enabled;
 
 extern void print_cfs_stats(struct seq_file *m, int cpu);
+extern void print_wrr_stats(struct seq_file *m, int cpu);
 extern void print_rt_stats(struct seq_file *m, int cpu);
 extern void print_dl_stats(struct seq_file *m, int cpu);
 extern void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq);
+extern void print_wrr_rq(struct seq_file *m, int cpu, struct wrr_rq *wrr_rq);
 extern void print_rt_rq(struct seq_file *m, int cpu, struct rt_rq *rt_rq);
 extern void print_dl_rq(struct seq_file *m, int cpu, struct dl_rq *dl_rq);
 #ifdef CONFIG_NUMA_BALANCING
@@ -2060,6 +2076,7 @@ print_numa_stats(struct seq_file *m, int node, unsigned long tsf,
 #endif /* CONFIG_SCHED_DEBUG */
 
 extern void init_cfs_rq(struct cfs_rq *cfs_rq);
+extern void init_wrr_rq(struct wrr_rq *wrr_rq);
 extern void init_rt_rq(struct rt_rq *rt_rq);
 extern void init_dl_rq(struct dl_rq *dl_rq);
 

@@ -2162,6 +2162,9 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	init_dl_inactive_task_timer(&p->dl);
 	__dl_clear_params(p);
 
+	INIT_LIST_HEAD(&p->wrr.list);
+	p->wrr.time_slice	= WRR_TIMESLICE * p->wrr.weight;
+
 	INIT_LIST_HEAD(&p->rt.run_list);
 	p->rt.timeout		= 0;
 	p->rt.time_slice	= sched_rr_timeslice;
@@ -2333,7 +2336,7 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	else if (rt_prio(p->prio))
 		p->sched_class = &rt_sched_class;
 	else
-		p->sched_class = &fair_sched_class;
+		p->sched_class = &wrr_sched_class;
 
 	init_entity_runnable_average(&p->se);
 
@@ -3059,6 +3062,7 @@ void scheduler_tick(void)
 #ifdef CONFIG_SMP
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
+	wrr_load_balance(rq);
 #endif
 }
 
@@ -3314,14 +3318,16 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	 * opportunity to pull in more work from other CPUs.
 	 */
 	if (likely((prev->sched_class == &idle_sched_class ||
-		    prev->sched_class == &fair_sched_class) &&
+		    /* prev->sched_class == &fair_sched_class || */
+		    prev->sched_class == &wrr_sched_class) &&
 		   rq->nr_running == rq->cfs.h_nr_running)) {
 
-		p = fair_sched_class.pick_next_task(rq, prev, rf);
+		p = wrr_sched_class.pick_next_task(rq, prev, rf);
 		if (unlikely(p == RETRY_TASK))
 			goto again;
 
 		/* Assumes fair_sched_class->next == idle_sched_class */
+		/* Not actually true, but fair_sched_class has no tasks */
 		if (unlikely(!p))
 			p = idle_sched_class.pick_next_task(rq, prev, rf);
 
@@ -3838,7 +3844,7 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 			p->dl.dl_boosted = 0;
 		if (rt_prio(oldprio))
 			p->rt.timeout = 0;
-		p->sched_class = &fair_sched_class;
+		p->sched_class = &wrr_sched_class;
 	}
 
 	p->prio = prio;
@@ -4094,7 +4100,7 @@ static void __setscheduler(struct rq *rq, struct task_struct *p,
 	else if (rt_prio(p->prio))
 		p->sched_class = &rt_sched_class;
 	else
-		p->sched_class = &fair_sched_class;
+		p->sched_class = &wrr_sched_class;
 }
 
 /*
@@ -5986,6 +5992,7 @@ void __init sched_init(void)
 		rq->calc_load_active = 0;
 		rq->calc_load_update = jiffies + LOAD_FREQ;
 		init_cfs_rq(&rq->cfs);
+		init_wrr_rq(&rq->wrr);
 		init_rt_rq(&rq->rt);
 		init_dl_rq(&rq->dl);
 #ifdef CONFIG_FAIR_GROUP_SCHED

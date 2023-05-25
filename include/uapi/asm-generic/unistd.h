@@ -737,8 +737,13 @@ __SC_COMP(__NR_io_pgetevents, sys_io_pgetevents, compat_sys_io_pgetevents)
 #define __NR_rseq 293
 __SYSCALL(__NR_rseq, sys_rseq)
 
+#define __NR_sched_setweight 294
+__SYSCALL(__NR_sched_setweight, sys_sched_setweight)
+#define __NR_sched_getweight 295
+__SYSCALL(__NR_sched_getweight, sys_sched_getweight)
+
 #undef __NR_syscalls
-#define __NR_syscalls 294
+#define __NR_syscalls 296
 
 /*
  * 32 bit systems traditionally used different

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 BOOT_PATH="rpi3/boot"
 USER_ID=`id -u`
@@ -66,9 +66,16 @@ mkdir -p tmp_modules
 dd if=/dev/zero of=modules.img bs=1024 count=20480
 mkfs.ext4 -q -F -t ext4 -b 1024 -L modules modules.img
 sudo mount -o loop modules.img ./tmp/lib/modules
+
+if type aarch64-unknown-linux-gnu-gcc >/dev/null 2>&1; then
+	_CROSS_COMPILE='ccache aarch64-unknown-linux-gnu-'
+elif type aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+	_CROSS_COMPILE='ccache aarch64-linux-gnu-'
+fi
+
 if [ -n "$IS_64BIT" ]; then
 	export ARCH=arm64
-	export CROSS_COMPILE=aarch64-linux-gnu-
+	export CROSS_COMPILE=$_CROSS_COMPILE
 else
 	export ARCH=arm
 	export CROSS_COMPILE=arm-linux-gnueabi-
