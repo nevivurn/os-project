@@ -293,8 +293,8 @@ static long sched_setweight(struct task_struct *p, unsigned int weight) {
 	int retval;
 
 	if (!capable(CAP_SYS_NICE)
-		&& !uid_eq(cred->euid, pcred->euid)
-		&& !uid_eq(cred->euid, pcred->uid))
+		&& !(uid_eq(cred->euid, pcred->euid) && (p->wrr.weight >= weight))
+		&& !(uid_eq(cred->euid, pcred->uid) && (p->wrr.weight >= weight)))
 		return -EPERM;
 
 	rq = task_rq_lock(p, &rf);
