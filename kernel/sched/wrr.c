@@ -7,9 +7,15 @@ wrr_task_of(struct sched_wrr_entity *wrr_se) {
 	return container_of(wrr_se, struct task_struct, wrr);
 }
 
+/*
+ * Global load balancing locks and timestamp.
+ */
 static DEFINE_RAW_SPINLOCK(wrr_balance_lock);
 static unsigned long wrr_global_next_balance;
 
+/*
+ * Initialize the wrr_rq with initial empty values.
+ */
 void __init init_wrr_rq(struct wrr_rq *wrr_rq) {
 	INIT_LIST_HEAD(&wrr_rq->head);
 	wrr_rq->total_weight = (atomic_t) ATOMIC_INIT(0);
@@ -18,9 +24,11 @@ void __init init_wrr_rq(struct wrr_rq *wrr_rq) {
 
 static void update_curr_wrr(struct rq *rq);
 
+/*
+ * Append the incoming task to the WRR list.
+ * Called with rq->lock.
+ */
 static void enqueue_task_wrr(struct rq *rq, struct task_struct *p, int flags) {
-	// TODO(wrr): deal with flags. we probably want to support ENQUEUE_HEAD
-
 	struct sched_wrr_entity *wrr_se = &p->wrr;
 	struct wrr_rq *wrr_rq = &rq->wrr;
 
@@ -31,6 +39,10 @@ static void enqueue_task_wrr(struct rq *rq, struct task_struct *p, int flags) {
 	atomic_add(p->wrr.weight, &wrr_rq->total_weight);
 }
 
+/*
+ * Remove the given task from the WRR list.
+ * Called with rq->lock.
+ */
 static void dequeue_task_wrr(struct rq *rq, struct task_struct *p, int flags) {
 	struct sched_wrr_entity *wrr_se = &p->wrr;
 	struct wrr_rq *wrr_rq = &rq->wrr;
@@ -42,15 +54,24 @@ static void dequeue_task_wrr(struct rq *rq, struct task_struct *p, int flags) {
 	atomic_sub(p->wrr.weight,&wrr_rq->total_weight);
 }
 
+/*
+ * Requeue the current task to the tail of the WRR list.
+ * Does not reset timeslice.
+ * Called with rq->lock.
+ */
 static void yield_task_wrr(struct rq *rq) {
 	struct task_struct *curr = rq->curr;
 	dequeue_task_wrr(rq, curr, 0);
 	enqueue_task_wrr(rq, curr, 0);
 }
 
-// never preempt
+/* Never preempt */
 static void check_preempt_curr_wrr(struct rq *rq, struct task_struct *p, int flags) {}
 
+/*
+ * Pick next task from the WRR list: simply pick the current list head.
+ * Called with rq->lock.
+ */
 static struct task_struct *
 pick_next_task_wrr(struct rq *rq, struct task_struct *prev, struct rq_flags *rf) {
 	struct sched_wrr_entity *wrr_se;
@@ -69,17 +90,27 @@ pick_next_task_wrr(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	return p;
 }
 
+/* Just update current statistics */
 static void put_prev_task_wrr(struct rq *rq, struct task_struct *prev) {
 	update_curr_wrr(rq);
 }
 
+/*
+ * Select a CPU to place the incoming task in.
+ * Chooses the CPU with the minimum WRR total_weight.
+ * Called with no locks.
+ *
+ * It is OK to traverse and read the total_weights without acquiring any
+ * further locks, as we are tolerant of occasional mis-placement of tasks, as
+ * long as basic constraints are kept.
+ */
 static int select_task_rq_wrr(struct task_struct *p, int task_cpu, int sd_flag, int flags) {
 	int cpu;
 	int min_cpu = task_cpu;
 	unsigned int min_weight = atomic_read(&cpu_rq(task_cpu)->wrr.total_weight);
 	unsigned int cur_weight;
 
-	// TODO(wrr): do we actually need rcu_read_lock here?
+	// We must acquire RCU read locks here as we need to traverse the CPU list.
 	rcu_read_lock();
 	for_each_possible_cpu(cpu) {
 		if (!cpumask_test_cpu(cpu, &p->cpus_allowed))
@@ -100,6 +131,9 @@ static void set_curr_task_wrr(struct rq *rq) {
 	rq->curr->se.exec_start = rq_clock_task(rq);
 }
 
+/*
+ * Update per-rq next_balance timestamps.
+ */
 static void update_wrr_load_balance(unsigned long next_balance) {
 	int cpu;
 	for_each_possible_cpu(cpu) {
@@ -108,6 +142,11 @@ static void update_wrr_load_balance(unsigned long next_balance) {
 	}
 }
 
+/*
+ * Actually perfrom load balancing.
+ * Called with wrr_balance_lock.
+ * Acquires and releases rq->lock for the two locks.
+ */
 static void _wrr_load_balance(void) {
 	struct rq *min_rq, *max_rq;
 	struct sched_wrr_entity *wrr_se, *max_wrr_se = NULL;
@@ -118,6 +157,7 @@ static void _wrr_load_balance(void) {
 	unsigned int min_weight = 0, max_weight = 0;
 	unsigned int p_weight;
 
+	// Search for the min/max CPU
 	rcu_read_lock();
 	for_each_possible_cpu(cpu) {
 		struct rq *rq = cpu_rq(cpu);
@@ -138,6 +178,7 @@ static void _wrr_load_balance(void) {
 
 	double_rq_lock(min_rq, max_rq);
 
+	// Search for the max task from max cpu
 	list_for_each_entry(wrr_se, &max_rq->wrr.head, list) {
 		struct task_struct *p = wrr_task_of(wrr_se);
 		unsigned int weight = wrr_se->weight;
@@ -160,6 +201,7 @@ static void _wrr_load_balance(void) {
 	p = wrr_task_of(max_wrr_se);
 	p_weight = max_wrr_se->weight;
 
+	// Migrate the task
 	deactivate_task(max_rq, p, 0);
 	set_task_cpu(p, min_cpu);
 	activate_task(min_rq, p, 0);
@@ -174,14 +216,20 @@ static void _wrr_load_balance(void) {
 		max_cpu, max_weight,
 		min_cpu, min_weight,
 		p->comm, p_weight);
-	return;
 }
 
-// rq->lock is *not* held
+/*
+ * Called from scheduler_tick to load balance WRR queues.
+ * Called with no locks.
+ *
+ * Check the per-rq next_balance timestamp first before acquiring the
+ * wrr_balance_lock to check the global timestamp. This allows us to avoid
+ * wrr_balance_lock contention in the vast majority of scheduler_tick() calls.
+ */
 void wrr_load_balance(struct rq *rq) {
 	struct wrr_rq *wrr_rq = &rq->wrr;
 
-	// We check wrr_rq->wrr_next_balance because it is OK if we race a bit
+	// It is OK if we race a bit, it will be corrected soon enough
 	if (!time_after_eq(jiffies, wrr_rq->wrr_next_balance))
 		return;
 
@@ -199,6 +247,11 @@ void wrr_load_balance(struct rq *rq) {
 	raw_spin_unlock(&wrr_balance_lock);
 }
 
+/*
+ * Tick down the current running task and yield if it has exhausted its
+ * time_slice.
+ * Called with rq->lock.
+ */
 static void task_tick_wrr(struct rq *rq, struct task_struct *p, int queued) {
 	update_curr_wrr(rq);
 
@@ -210,12 +263,18 @@ static void task_tick_wrr(struct rq *rq, struct task_struct *p, int queued) {
 	resched_curr(rq);
 }
 
+/*
+ * Just reset the task's weight.
+ */
 static void switched_to_wrr(struct rq *rq, struct task_struct *p) {
 	p->wrr.weight = WRR_DEFAULT_WEIGHT;
 }
 
 static void prio_changed_wrr(struct rq *rq, struct task_struct *p, int oldprio) {}
 
+/*
+ * Update current process' runtime statistics.
+ */
 static void update_curr_wrr(struct rq *rq) {
 	struct task_struct *curr = rq->curr;
 
@@ -245,12 +304,12 @@ get_rr_interval_wrr(struct rq *rq, struct task_struct *p) {
 }
 
 const struct sched_class wrr_sched_class = {
-	.next = &fair_sched_class,	// TODO(wrr): change to idle?
+	.next = &fair_sched_class,
 
 	.enqueue_task		= enqueue_task_wrr,
 	.dequeue_task		= dequeue_task_wrr,
 	.yield_task		= yield_task_wrr,
-	/* .yield_to_task */	// optional, probably optimization when a task yields to its own thread group.
+	/* .yield_to_task */	// optional, just an optimization when a task yields to its own thread group.
 	.check_preempt_curr	= check_preempt_curr_wrr,
 
 	.pick_next_task		= pick_next_task_wrr,
@@ -273,19 +332,22 @@ const struct sched_class wrr_sched_class = {
 	/* .task_fork */	// optional
 	/* .task_dead */	// optional
 
-	/* .switched_from */	// optional, maybe we can reset prio/weight here?
+	/* .switched_from */	// optional
 	.switched_to		= switched_to_wrr,
 	.prio_changed		= prio_changed_wrr,
 
-	.get_rr_interval	= get_rr_interval_wrr,	// optional, but nice to have probably
+	.get_rr_interval	= get_rr_interval_wrr,	// optional, but nice to have
 
 	.update_curr		= update_curr_wrr,
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
-	/* .task_change_group */			// optional
+	/* .task_change_group */	// optional
 #endif
 };
 
+/*
+ * Set the task's weight.
+ */
 static long sched_setweight(struct task_struct *p, unsigned int weight) {
 	struct rq *rq;
 	struct rq_flags rf;
@@ -297,6 +359,8 @@ static long sched_setweight(struct task_struct *p, unsigned int weight) {
 		&& !uid_eq(cred->euid, pcred->uid))
 		return -EPERM;
 
+	// We need to synchronize with rq->wrr, and make sure it's not suddenly
+	// moving around while we update total_weight.
 	rq = task_rq_lock(p, &rf);
 	retval = -EINVAL;
 	if (fair_policy(p->policy)) {
@@ -312,11 +376,17 @@ static long sched_setweight(struct task_struct *p, unsigned int weight) {
 	return retval;
 }
 
+/*
+ * Get the task's weight.
+ */
 static long sched_getweight(struct task_struct *p) {
 	struct rq *rq;
 	struct rq_flags rf;
 	int retval;
 
+	// While it is possible to be less strict with acquiring locks here, it
+	// doesn't hurt to do so. It's not lie sched_getweight is being called
+	// every scheduler tick or anything.
 	rq = task_rq_lock(p, &rf);
 	retval = -EINVAL;
 	if (p->sched_class == &wrr_sched_class)
@@ -326,6 +396,10 @@ static long sched_getweight(struct task_struct *p) {
 	return retval;
 }
 
+/*
+ * sched_setweight syscall definition.
+ * Adquires RCU read lock as it needs to search the task list.
+ */
 SYSCALL_DEFINE2(sched_setweight, pid_t, pid, unsigned int, weight) {
 	struct task_struct *p;
 	int retval;
@@ -345,6 +419,10 @@ SYSCALL_DEFINE2(sched_setweight, pid_t, pid, unsigned int, weight) {
 	return retval;
 }
 
+/*
+ * sched_getweight syscall definition.
+ * Adquires RCU read lock as it needs to search the task list.
+ */
 SYSCALL_DEFINE1(sched_getweight, pid_t, pid) {
 	struct task_struct *p;
 	int retval;

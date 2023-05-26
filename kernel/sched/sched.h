@@ -584,8 +584,6 @@ static inline int rt_bandwidth_enabled(void)
 
 struct wrr_rq {
 	struct list_head	head;
-	// TODO(wrr): rq-level stats (sum weights), debug stats
-
 	atomic_t		total_weight;
 	unsigned long		wrr_next_balance;
 };
