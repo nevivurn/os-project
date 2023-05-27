@@ -100,7 +100,7 @@ for each process to factorize a number. The results are shown below.
 |      1     |   914 |       1.313        |
 
 
-![Turnaround Time vs. WRR Weight](./experiment_result.png)
+![Turnaround Time vs. WRR Weight](./test/experiment_result.png)
 
 From the experiment, it's observed that the turnaround time is approximately 
 inversely proportional to the WRR weight. This outcome is reasonable, as the 
