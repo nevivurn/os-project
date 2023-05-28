@@ -121,4 +121,7 @@ inversely proportional to the WRR weight. This outcome is reasonable, as the
 timeslice assigned to each process is proportional to its WRR weight. Since each 
 process must wait for other processes in the runqueue to complete their timeslices 
 before it can run again, the turnaround time should theoretically be inversely 
-proportional to the WRR weight.
+proportional to the WRR weight. Additionally, the load balancing routine tries to
+ensure that the load on each CPU is balanced, so the turnaround time should 
+converge to the theoretical value as the experiment runs longer and more
+load balancing operations are performed.
